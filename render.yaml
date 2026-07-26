@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: medical-ai-backend
+    env: python
+    buildCommand: "pip install -r requirements.txt && python training/train.py"
+    startCommand: "uvicorn server.main:app --host 0.0.0.0 --port $PORT"
+    envVars:
+      - key: JWT_SECRET
+        generateValue: true
+      - key: JWT_ALGORITHM
+        value: HS256
+      - key: MONGODB_URI
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+    disk:
+      name: uploads-data
+      mountPath: /app/server/uploads
+      sizeGB: 1
