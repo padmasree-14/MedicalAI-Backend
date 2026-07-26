@@ -31,20 +31,7 @@ os.makedirs(METRICS_DIR, exist_ok=True)
 async def lifespan(app: FastAPI):
     # 1. Initialize database connection (MongoDB with local SQLite fallback)
     await db_manager.initialize()
-    
-    # 2. Check if deep learning model exists. If not, trigger a quick training cycle.
-    if not os.path.exists(MODEL_PATH):
-        print(f"Deep learning model not found at {MODEL_PATH}.")
-        print("Initializing automated model training on synthetic data...")
-        try:
-            from training.train import train_and_evaluate
-            train_and_evaluate()
-            print("Automated model training completed successfully.")
-        except Exception as e:
-            print(f"CRITICAL: Failed to train model on startup: {e}")
-    else:
-        print(f"Deep learning model detected at {MODEL_PATH}.")
-        
+    print("Backend service initialized successfully.")
     yield
     # Shutdown logic (if any)
     if db_manager.mongo_client:
