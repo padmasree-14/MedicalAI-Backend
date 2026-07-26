@@ -1,4 +1,4 @@
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, field_validator
 from typing import Dict, Optional, List
 
 class UserRegister(BaseModel):
@@ -7,9 +7,23 @@ class UserRegister(BaseModel):
     password: str = Field(..., min_length=6)
     clinic_name: Optional[str] = Field(None, max_length=100)
 
+    @field_validator('password')
+    @classmethod
+    def truncate_password(cls, v: str) -> str:
+        if v:
+            return v.encode('utf-8')[:72].decode('utf-8', errors='ignore')
+        return v
+
 class UserLogin(BaseModel):
     email: EmailStr
     password: str
+
+    @field_validator('password')
+    @classmethod
+    def truncate_password(cls, v: str) -> str:
+        if v:
+            return v.encode('utf-8')[:72].decode('utf-8', errors='ignore')
+        return v
 
 class Token(BaseModel):
     access_token: str
@@ -28,6 +42,13 @@ class UserProfile(BaseModel):
 class UserProfileUpdate(BaseModel):
     password: Optional[str] = Field(None, min_length=6)
     clinic_name: Optional[str] = Field(None, max_length=100)
+
+    @field_validator('password')
+    @classmethod
+    def truncate_password(cls, v: Optional[str]) -> Optional[str]:
+        if v:
+            return v.encode('utf-8')[:72].decode('utf-8', errors='ignore')
+        return v
 
 class PredictionResponse(BaseModel):
     id: str
