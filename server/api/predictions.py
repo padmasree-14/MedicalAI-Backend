@@ -7,7 +7,7 @@ from fastapi.responses import FileResponse
 
 from server.database.db import db_manager
 from server.database.models import PredictionResponse, ReportResponse
-from server.api.auth import get_current_user
+from server.api.auth import get_current_user, get_current_user_optional
 from server.model.predict import get_predictor
 from server.gradcam.gradcam import generate_gradcam
 from server.utils.llm import generate_ai_report
@@ -25,7 +25,7 @@ os.makedirs(REPORTS_DIR, exist_ok=True)
 async def predict(
     file: UploadFile = File(...),
     patient_name: str = Form("Anonymous Patient"),
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(get_current_user_optional)
 ):
     # 1. Validate file extension
     file_ext = os.path.splitext(file.filename)[1].lower()

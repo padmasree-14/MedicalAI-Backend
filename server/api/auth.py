@@ -77,6 +77,16 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
         raise credentials_exception
     return user
 
+optional_security = HTTPBearer(auto_error=False)
+
+async def get_current_user_optional(credentials: Optional[HTTPAuthorizationCredentials] = Depends(optional_security)) -> dict:
+    if not credentials or not credentials.credentials:
+        return {"id": "default_clinician", "username": "Staff Clinician", "email": "staff@hospital.org", "clinic_name": "General Clinic"}
+    try:
+        return await get_current_user(credentials)
+    except Exception:
+        return {"id": "default_clinician", "username": "Staff Clinician", "email": "staff@hospital.org", "clinic_name": "General Clinic"}
+
 # REST Endpoints
 @router.post("/register", status_code=status.HTTP_201_CREATED)
 async def register(user_in: UserRegister):

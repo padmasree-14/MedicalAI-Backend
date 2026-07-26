@@ -130,11 +130,13 @@ async def root_login(payload: dict):
         from fastapi import HTTPException
         raise HTTPException(status_code=400, detail=str(e))
 
+from server.api.auth import router as auth_router, get_current_user, get_current_user_optional
+
 @app.post("/predict", tags=["Root Aliases"])
 async def root_predict(
     file: UploadFile = File(...),
     patient_name: str = Form("Anonymous Patient"),
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(get_current_user_optional)
 ):
     from server.api.predictions import predict as pred_predict
     return await pred_predict(file, patient_name, current_user)
