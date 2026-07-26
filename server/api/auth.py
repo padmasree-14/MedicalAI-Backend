@@ -15,31 +15,34 @@ JWT_SECRET = os.getenv("JWT_SECRET", "supersecretjwtkeyforadvancedmedicalaiplatf
 JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
 ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", 1440))
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+pwd_context = CryptContext(schemes=["pbkdf2_sha256", "bcrypt"], deprecated="auto")
 security = HTTPBearer()
 
 router = APIRouter(prefix="/api/auth", tags=["Authentication"])
 
 # Utility helpers
 def hash_password(password: str) -> str:
-    pwd_str = str(password)[:72]
+    if not password:
+        return ""
+    safe_pwd = str(password)[:72]
     try:
-        return pwd_context.hash(pwd_str)
+        return pwd_context.hash(safe_pwd)
     except Exception:
         import hashlib
-        short_pwd = hashlib.sha256(password.encode('utf-8')).hexdigest()[:60]
-        return pwd_context.hash(short_pwd)
+        return pwd_context.hash(hashlib.sha256(password.encode('utf-8')).hexdigest()[:50])
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    pwd_str = str(plain_password)[:72]
+    if not plain_password or not hashed_password:
+        return False
+    safe_pwd = str(plain_password)[:72]
     try:
-        if pwd_context.verify(pwd_str, hashed_password):
+        if pwd_context.verify(safe_pwd, hashed_password):
             return True
     except Exception:
         pass
     try:
         import hashlib
-        short_pwd = hashlib.sha256(plain_password.encode('utf-8')).hexdigest()[:60]
+        short_pwd = hashlib.sha256(plain_password.encode('utf-8')).hexdigest()[:50]
         return pwd_context.verify(short_pwd, hashed_password)
     except Exception:
         return False
