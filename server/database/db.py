@@ -8,92 +8,100 @@ from pymongo.errors import ServerSelectionTimeoutError
 from bson.objectid import ObjectId
 
 # Database config
-MONGODB_URI = os.getenv("MONGODB_URI", "mongodb://localhost:27017/medical_ai")
+MONGODB_URI = os.getenv("MONGODB_URI", "")
 SQLITE_DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "medical_ai.db")
 
 class DatabaseManager:
     def __init__(self):
-        self.use_sqlite = False
+        self.use_sqlite = True
         self.mongo_client = None
         self.db = None
         
     async def initialize(self):
-        """Tries to connect to MongoDB. If it fails, falls back to SQLite."""
-        try:
-            print("Attempting to connect to MongoDB...")
-            self.mongo_client = AsyncIOMotorClient(MONGODB_URI, serverSelectionTimeoutMS=2000)
-            # Trigger connection test
-            await self.mongo_client.admin.command('ping')
-            self.db = self.mongo_client.get_database()
-            self.use_sqlite = False
-            print("Successfully connected to MongoDB.")
-        except Exception as e:
-            print(f"MongoDB connection failed: {e}")
-            print("Falling back to local SQLite database...")
-            self.use_sqlite = True
-            await self._init_sqlite()
+        """Tries to connect to MongoDB if configured. Otherwise falls back to SQLite."""
+        mongodb_url = os.getenv("MONGODB_URI", "")
+        if mongodb_url and "localhost" not in mongodb_url:
+            try:
+                print("Attempting to connect to MongoDB Atlas...")
+                self.mongo_client = AsyncIOMotorClient(mongodb_url, serverSelectionTimeoutMS=3000)
+                await self.mongo_client.admin.command('ping')
+                self.db = self.mongo_client.get_database()
+                self.use_sqlite = False
+                print("Successfully connected to MongoDB.")
+                return
+            except Exception as e:
+                print(f"MongoDB connection failed: {e}")
+        
+        print("Using local SQLite database fallback...")
+        self.use_sqlite = True
+        self.db = None
+        await self._init_sqlite()
 
     async def _init_sqlite(self):
         """Initializes SQLite tables in a thread-safe pool execution."""
+        os.makedirs(os.path.dirname(SQLITE_DB_PATH), exist_ok=True)
         def run_init():
-            conn = sqlite3.connect(SQLITE_DB_PATH)
-            c = conn.cursor()
-            
-            # Users table
-            c.execute("""
-            CREATE TABLE IF NOT EXISTS users (
-                id TEXT PRIMARY KEY,
-                username TEXT UNIQUE,
-                email TEXT UNIQUE,
-                password_hash TEXT,
-                clinic_name TEXT,
-                created_at REAL
-            )
-            """)
-            
-            # Predictions table
-            c.execute("""
-            CREATE TABLE IF NOT EXISTS predictions (
-                id TEXT PRIMARY KEY,
-                user_id TEXT,
-                filename TEXT,
-                filepath TEXT,
-                predicted_class TEXT,
-                confidence REAL,
-                probabilities TEXT,
-                gradcam_path TEXT,
-                created_at REAL,
-                FOREIGN KEY(user_id) REFERENCES users(id)
-            )
-            """)
-            
-            # Reports table
-            c.execute("""
-            CREATE TABLE IF NOT EXISTS reports (
-                id TEXT PRIMARY KEY,
-                prediction_id TEXT,
-                user_id TEXT,
-                pdf_path TEXT,
-                report_text TEXT,
-                created_at REAL,
-                FOREIGN KEY(prediction_id) REFERENCES predictions(id),
-                FOREIGN KEY(user_id) REFERENCES users(id)
-            )
-            """)
-            
-            # Logs table
-            c.execute("""
-            CREATE TABLE IF NOT EXISTS logs (
-                id TEXT PRIMARY KEY,
-                user_id TEXT,
-                action TEXT,
-                details TEXT,
-                timestamp REAL
-            )
-            """)
-            
-            conn.commit()
-            conn.close()
+            try:
+                conn = sqlite3.connect(SQLITE_DB_PATH)
+                c = conn.cursor()
+                
+                # Users table
+                c.execute("""
+                CREATE TABLE IF NOT EXISTS users (
+                    id TEXT PRIMARY KEY,
+                    username TEXT UNIQUE,
+                    email TEXT UNIQUE,
+                    password_hash TEXT,
+                    clinic_name TEXT,
+                    created_at REAL
+                )
+                """)
+                
+                # Predictions table
+                c.execute("""
+                CREATE TABLE IF NOT EXISTS predictions (
+                    id TEXT PRIMARY KEY,
+                    user_id TEXT,
+                    filename TEXT,
+                    filepath TEXT,
+                    predicted_class TEXT,
+                    confidence REAL,
+                    probabilities TEXT,
+                    gradcam_path TEXT,
+                    created_at REAL,
+                    FOREIGN KEY(user_id) REFERENCES users(id)
+                )
+                """)
+                
+                # Reports table
+                c.execute("""
+                CREATE TABLE IF NOT EXISTS reports (
+                    id TEXT PRIMARY KEY,
+                    prediction_id TEXT,
+                    user_id TEXT,
+                    pdf_path TEXT,
+                    report_text TEXT,
+                    created_at REAL,
+                    FOREIGN KEY(prediction_id) REFERENCES predictions(id),
+                    FOREIGN KEY(user_id) REFERENCES users(id)
+                )
+                """)
+                
+                # Logs table
+                c.execute("""
+                CREATE TABLE IF NOT EXISTS logs (
+                    id TEXT PRIMARY KEY,
+                    user_id TEXT,
+                    action TEXT,
+                    details TEXT,
+                    timestamp REAL
+                )
+                """)
+                
+                conn.commit()
+                conn.close()
+            except Exception as e:
+                print(f"SQLite Initialization Error: {e}")
             
         await asyncio.to_thread(run_init)
         print(f"Local SQLite database initialized at {SQLITE_DB_PATH}")
@@ -104,7 +112,7 @@ class DatabaseManager:
         user_dict = dict(user_dict)
         user_dict["created_at"] = time.time()
         
-        if not self.use_sqlite:
+        if not self.use_sqlite and self.db is not None:
             # MongoDB
             res = await self.db.users.insert_one(user_dict)
             user_dict["id"] = str(res.inserted_id)
@@ -130,8 +138,8 @@ class DatabaseManager:
                     ))
                     conn.commit()
                     return True
-                except sqlite3.IntegrityError as ie:
-                    print(f"SQLite Integrity Error: {ie}")
+                except Exception as ie:
+                    print(f"SQLite User Insert Error: {ie}")
                     return False
                 finally:
                     conn.close()
@@ -143,7 +151,7 @@ class DatabaseManager:
 
     async def get_user_by_email(self, email):
         """Retrieves a user by email"""
-        if not self.use_sqlite:
+        if not self.use_sqlite and self.db is not None:
             user = await self.db.users.find_one({"email": email})
             if user:
                 user["id"] = str(user["_id"])
@@ -151,20 +159,24 @@ class DatabaseManager:
             return user
         else:
             def run_db():
-                conn = sqlite3.connect(SQLITE_DB_PATH)
-                conn.row_factory = sqlite3.Row
-                c = conn.cursor()
-                c.execute("SELECT * FROM users WHERE email = ?", (email,))
-                row = c.fetchone()
-                conn.close()
-                if row:
-                    return dict(row)
-                return None
+                try:
+                    conn = sqlite3.connect(SQLITE_DB_PATH)
+                    conn.row_factory = sqlite3.Row
+                    c = conn.cursor()
+                    c.execute("SELECT * FROM users WHERE email = ?", (email,))
+                    row = c.fetchone()
+                    conn.close()
+                    if row:
+                        return dict(row)
+                    return None
+                except Exception as e:
+                    print(f"SQLite get_user_by_email Error: {e}")
+                    return None
             return await asyncio.to_thread(run_db)
 
     async def get_user_by_id(self, user_id):
         """Retrieves a user by ID"""
-        if not self.use_sqlite:
+        if not self.use_sqlite and self.db is not None:
             try:
                 user = await self.db.users.find_one({"_id": ObjectId(user_id)})
                 if user:
@@ -175,20 +187,24 @@ class DatabaseManager:
                 return None
         else:
             def run_db():
-                conn = sqlite3.connect(SQLITE_DB_PATH)
-                conn.row_factory = sqlite3.Row
-                c = conn.cursor()
-                c.execute("SELECT * FROM users WHERE id = ?", (user_id,))
-                row = c.fetchone()
-                conn.close()
-                if row:
-                    return dict(row)
-                return None
+                try:
+                    conn = sqlite3.connect(SQLITE_DB_PATH)
+                    conn.row_factory = sqlite3.Row
+                    c = conn.cursor()
+                    c.execute("SELECT * FROM users WHERE id = ?", (user_id,))
+                    row = c.fetchone()
+                    conn.close()
+                    if row:
+                        return dict(row)
+                    return None
+                except Exception as e:
+                    print(f"SQLite get_user_by_id Error: {e}")
+                    return None
             return await asyncio.to_thread(run_db)
 
     async def update_user(self, user_id, update_dict):
         """Updates user profile"""
-        if not self.use_sqlite:
+        if not self.use_sqlite and self.db is not None:
             try:
                 await self.db.users.update_one({"_id": ObjectId(user_id)}, {"$set": update_dict})
                 return True
@@ -196,14 +212,18 @@ class DatabaseManager:
                 return False
         else:
             def run_db():
-                conn = sqlite3.connect(SQLITE_DB_PATH)
-                c = conn.cursor()
-                fields = ", ".join([f"{k} = ?" for k in update_dict.keys()])
-                values = list(update_dict.values()) + [user_id]
-                c.execute(f"UPDATE users SET {fields} WHERE id = ?", values)
-                conn.commit()
-                conn.close()
-                return True
+                try:
+                    conn = sqlite3.connect(SQLITE_DB_PATH)
+                    c = conn.cursor()
+                    fields = ", ".join([f"{k} = ?" for k in update_dict.keys()])
+                    values = list(update_dict.values()) + [user_id]
+                    c.execute(f"UPDATE users SET {fields} WHERE id = ?", values)
+                    conn.commit()
+                    conn.close()
+                    return True
+                except Exception as e:
+                    print(f"SQLite update_user Error: {e}")
+                    return False
             return await asyncio.to_thread(run_db)
 
     # ================= PREDICTION OPERATIONS =================
@@ -211,7 +231,7 @@ class DatabaseManager:
         pred_dict = dict(pred_dict)
         pred_dict["created_at"] = time.time()
         
-        if not self.use_sqlite:
+        if not self.use_sqlite and self.db is not None:
             res = await self.db.predictions.insert_one(pred_dict)
             pred_dict["id"] = str(res.inserted_id)
             del pred_dict["_id"]
@@ -219,30 +239,33 @@ class DatabaseManager:
         else:
             pred_dict["id"] = pred_dict.get("id") or str(ObjectId())
             def run_db():
-                conn = sqlite3.connect(SQLITE_DB_PATH)
-                c = conn.cursor()
-                c.execute("""
-                INSERT INTO predictions (id, user_id, filename, filepath, predicted_class, confidence, probabilities, gradcam_path, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, (
-                    pred_dict["id"],
-                    pred_dict["user_id"],
-                    pred_dict["filename"],
-                    pred_dict["filepath"],
-                    pred_dict["predicted_class"],
-                    pred_dict["confidence"],
-                    json.dumps(pred_dict["probabilities"]),
-                    pred_dict["gradcam_path"],
-                    pred_dict["created_at"]
-                ))
-                conn.commit()
-                conn.close()
+                try:
+                    conn = sqlite3.connect(SQLITE_DB_PATH)
+                    c = conn.cursor()
+                    c.execute("""
+                    INSERT INTO predictions (id, user_id, filename, filepath, predicted_class, confidence, probabilities, gradcam_path, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (
+                        pred_dict["id"],
+                        pred_dict["user_id"],
+                        pred_dict["filename"],
+                        pred_dict["filepath"],
+                        pred_dict["predicted_class"],
+                        pred_dict["confidence"],
+                        json.dumps(pred_dict["probabilities"]),
+                        pred_dict["gradcam_path"],
+                        pred_dict["created_at"]
+                    ))
+                    conn.commit()
+                    conn.close()
+                except Exception as e:
+                    print(f"SQLite create_prediction Error: {e}")
             await asyncio.to_thread(run_db)
             return pred_dict
 
     async def get_predictions(self, user_id):
         """Retrieves history of predictions for a specific user"""
-        if not self.use_sqlite:
+        if not self.use_sqlite and self.db is not None:
             cursor = self.db.predictions.find({"user_id": user_id}).sort("created_at", -1)
             predictions = []
             async for doc in cursor:
@@ -252,22 +275,26 @@ class DatabaseManager:
             return predictions
         else:
             def run_db():
-                conn = sqlite3.connect(SQLITE_DB_PATH)
-                conn.row_factory = sqlite3.Row
-                c = conn.cursor()
-                c.execute("SELECT * FROM predictions WHERE user_id = ? ORDER BY created_at DESC", (user_id,))
-                rows = c.fetchall()
-                conn.close()
-                results = []
-                for row in rows:
-                    item = dict(row)
-                    item["probabilities"] = json.loads(item["probabilities"])
-                    results.append(item)
-                return results
+                try:
+                    conn = sqlite3.connect(SQLITE_DB_PATH)
+                    conn.row_factory = sqlite3.Row
+                    c = conn.cursor()
+                    c.execute("SELECT * FROM predictions WHERE user_id = ? ORDER BY created_at DESC", (user_id,))
+                    rows = c.fetchall()
+                    conn.close()
+                    results = []
+                    for row in rows:
+                        item = dict(row)
+                        item["probabilities"] = json.loads(item["probabilities"])
+                        results.append(item)
+                    return results
+                except Exception as e:
+                    print(f"SQLite get_predictions Error: {e}")
+                    return []
             return await asyncio.to_thread(run_db)
 
     async def get_prediction_by_id(self, pred_id):
-        if not self.use_sqlite:
+        if not self.use_sqlite and self.db is not None:
             try:
                 doc = await self.db.predictions.find_one({"_id": ObjectId(pred_id)})
                 if doc:
@@ -278,22 +305,26 @@ class DatabaseManager:
                 return None
         else:
             def run_db():
-                conn = sqlite3.connect(SQLITE_DB_PATH)
-                conn.row_factory = sqlite3.Row
-                c = conn.cursor()
-                c.execute("SELECT * FROM predictions WHERE id = ?", (pred_id,))
-                row = c.fetchone()
-                conn.close()
-                if row:
-                    item = dict(row)
-                    item["probabilities"] = json.loads(item["probabilities"])
-                    return item
-                return None
+                try:
+                    conn = sqlite3.connect(SQLITE_DB_PATH)
+                    conn.row_factory = sqlite3.Row
+                    c = conn.cursor()
+                    c.execute("SELECT * FROM predictions WHERE id = ?", (pred_id,))
+                    row = c.fetchone()
+                    conn.close()
+                    if row:
+                        item = dict(row)
+                        item["probabilities"] = json.loads(item["probabilities"])
+                        return item
+                    return None
+                except Exception as e:
+                    print(f"SQLite get_prediction_by_id Error: {e}")
+                    return None
             return await asyncio.to_thread(run_db)
 
     async def delete_prediction(self, pred_id, user_id):
         """Deletes prediction entry from database"""
-        if not self.use_sqlite:
+        if not self.use_sqlite and self.db is not None:
             try:
                 res = await self.db.predictions.delete_one({"_id": ObjectId(pred_id), "user_id": user_id})
                 return res.deleted_count > 0
@@ -301,13 +332,17 @@ class DatabaseManager:
                 return False
         else:
             def run_db():
-                conn = sqlite3.connect(SQLITE_DB_PATH)
-                c = conn.cursor()
-                c.execute("DELETE FROM predictions WHERE id = ? AND user_id = ?", (pred_id, user_id))
-                count = c.rowcount
-                conn.commit()
-                conn.close()
-                return count > 0
+                try:
+                    conn = sqlite3.connect(SQLITE_DB_PATH)
+                    c = conn.cursor()
+                    c.execute("DELETE FROM predictions WHERE id = ? AND user_id = ?", (pred_id, user_id))
+                    count = c.rowcount
+                    conn.commit()
+                    conn.close()
+                    return count > 0
+                except Exception as e:
+                    print(f"SQLite delete_prediction Error: {e}")
+                    return False
             return await asyncio.to_thread(run_db)
 
     # ================= REPORT OPERATIONS =================
@@ -315,7 +350,7 @@ class DatabaseManager:
         report_dict = dict(report_dict)
         report_dict["created_at"] = time.time()
         
-        if not self.use_sqlite:
+        if not self.use_sqlite and self.db is not None:
             res = await self.db.reports.insert_one(report_dict)
             report_dict["id"] = str(res.inserted_id)
             del report_dict["_id"]
@@ -323,26 +358,29 @@ class DatabaseManager:
         else:
             report_dict["id"] = report_dict.get("id") or str(ObjectId())
             def run_db():
-                conn = sqlite3.connect(SQLITE_DB_PATH)
-                c = conn.cursor()
-                c.execute("""
-                INSERT INTO reports (id, prediction_id, user_id, pdf_path, report_text, created_at)
-                VALUES (?, ?, ?, ?, ?, ?)
-                """, (
-                    report_dict["id"],
-                    report_dict["prediction_id"],
-                    report_dict["user_id"],
-                    report_dict["pdf_path"],
-                    json.dumps(report_dict["report_text"]),
-                    report_dict["created_at"]
-                ))
-                conn.commit()
-                conn.close()
+                try:
+                    conn = sqlite3.connect(SQLITE_DB_PATH)
+                    c = conn.cursor()
+                    c.execute("""
+                    INSERT INTO reports (id, prediction_id, user_id, pdf_path, report_text, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """, (
+                        report_dict["id"],
+                        report_dict["prediction_id"],
+                        report_dict["user_id"],
+                        report_dict["pdf_path"],
+                        json.dumps(report_dict["report_text"]),
+                        report_dict["created_at"]
+                    ))
+                    conn.commit()
+                    conn.close()
+                except Exception as e:
+                    print(f"SQLite create_report Error: {e}")
             await asyncio.to_thread(run_db)
             return report_dict
 
     async def get_report_by_prediction(self, pred_id, user_id):
-        if not self.use_sqlite:
+        if not self.use_sqlite and self.db is not None:
             doc = await self.db.reports.find_one({"prediction_id": pred_id, "user_id": user_id})
             if doc:
                 doc["id"] = str(doc["_id"])
@@ -350,17 +388,21 @@ class DatabaseManager:
             return doc
         else:
             def run_db():
-                conn = sqlite3.connect(SQLITE_DB_PATH)
-                conn.row_factory = sqlite3.Row
-                c = conn.cursor()
-                c.execute("SELECT * FROM reports WHERE prediction_id = ? AND user_id = ?", (pred_id, user_id))
-                row = c.fetchone()
-                conn.close()
-                if row:
-                    item = dict(row)
-                    item["report_text"] = json.loads(item["report_text"])
-                    return item
-                return None
+                try:
+                    conn = sqlite3.connect(SQLITE_DB_PATH)
+                    conn.row_factory = sqlite3.Row
+                    c = conn.cursor()
+                    c.execute("SELECT * FROM reports WHERE prediction_id = ? AND user_id = ?", (pred_id, user_id))
+                    row = c.fetchone()
+                    conn.close()
+                    if row:
+                        item = dict(row)
+                        item["report_text"] = json.loads(item["report_text"])
+                        return item
+                    return None
+                except Exception as e:
+                    print(f"SQLite get_report_by_prediction Error: {e}")
+                    return None
             return await asyncio.to_thread(run_db)
 
     # ================= LOG SYSTEM =================
@@ -372,21 +414,24 @@ class DatabaseManager:
             "details": details,
             "timestamp": time.time()
         }
-        if not self.use_sqlite:
+        if not self.use_sqlite and self.db is not None:
             try:
                 await self.db.logs.insert_one(log_entry)
             except Exception as e:
                 print(f"Failed to save log to MongoDB: {e}")
         else:
             def run_db():
-                conn = sqlite3.connect(SQLITE_DB_PATH)
-                c = conn.cursor()
-                c.execute("""
-                INSERT INTO logs (id, user_id, action, details, timestamp)
-                VALUES (?, ?, ?, ?, ?)
-                """, (log_entry["id"], user_id, action, details, log_entry["timestamp"]))
-                conn.commit()
-                conn.close()
+                try:
+                    conn = sqlite3.connect(SQLITE_DB_PATH)
+                    c = conn.cursor()
+                    c.execute("""
+                    INSERT INTO logs (id, user_id, action, details, timestamp)
+                    VALUES (?, ?, ?, ?, ?)
+                    """, (log_entry["id"], user_id, action, details, log_entry["timestamp"]))
+                    conn.commit()
+                    conn.close()
+                except Exception as e:
+                    print(f"SQLite log_action Error: {e}")
             await asyncio.to_thread(run_db)
 
 # Global DB manager singleton

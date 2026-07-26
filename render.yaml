@@ -5,6 +5,8 @@ services:
     buildCommand: "pip install -r requirements.txt && python training/train.py"
     startCommand: "uvicorn server.main:app --host 0.0.0.0 --port $PORT"
     envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
       - key: JWT_SECRET
         generateValue: true
       - key: JWT_ALGORITHM
