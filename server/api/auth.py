@@ -22,12 +22,27 @@ router = APIRouter(prefix="/api/auth", tags=["Authentication"])
 
 # Utility helpers
 def hash_password(password: str) -> str:
-    safe_pwd = password.encode('utf-8')[:72].decode('utf-8', errors='ignore')
-    return pwd_context.hash(safe_pwd)
+    pwd_str = str(password)[:72]
+    try:
+        return pwd_context.hash(pwd_str)
+    except Exception:
+        import hashlib
+        short_pwd = hashlib.sha256(password.encode('utf-8')).hexdigest()[:60]
+        return pwd_context.hash(short_pwd)
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    safe_pwd = plain_password.encode('utf-8')[:72].decode('utf-8', errors='ignore')
-    return pwd_context.verify(safe_pwd, hashed_password)
+    pwd_str = str(plain_password)[:72]
+    try:
+        if pwd_context.verify(pwd_str, hashed_password):
+            return True
+    except Exception:
+        pass
+    try:
+        import hashlib
+        short_pwd = hashlib.sha256(plain_password.encode('utf-8')).hexdigest()[:60]
+        return pwd_context.verify(short_pwd, hashed_password)
+    except Exception:
+        return False
 
 def create_access_token(user_id: str) -> str:
     expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
