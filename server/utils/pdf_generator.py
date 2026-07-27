@@ -105,7 +105,11 @@ def build_patient_pdf(output_path, prediction_data, report_data, username="Staff
     story.append(Spacer(1, 10))
     
     # Patient & Metadata Table
-    formatted_date = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(prediction_data.get("created_at", time.time())))
+    raw_date = prediction_data.get("created_at", time.time())
+    if isinstance(raw_date, (int, float)):
+        formatted_date = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(raw_date))
+    else:
+        formatted_date = str(raw_date)[:19].replace('T', ' ')
     
     meta_data = [
         [

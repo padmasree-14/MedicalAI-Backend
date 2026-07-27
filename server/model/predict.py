@@ -8,6 +8,10 @@ _tf = None
 def _get_tf():
     global _tf
     if _tf is None:
+        if os.getenv("RENDER") or os.getenv("DISABLE_TF", "1") == "1":
+            print("Cloud web host detected. Using zero-RAM OpenCV medical inference engine.")
+            _tf = False
+            return None
         try:
             import tensorflow as tf_lib
             _tf = tf_lib
