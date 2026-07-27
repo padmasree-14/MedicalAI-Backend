@@ -40,8 +40,10 @@ async def predict(
     input_filepath = os.path.join(UPLOADS_DIR, unique_filename)
     
     try:
+        file_bytes = await file.read()
         with open(input_filepath, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
+            buffer.write(file_bytes)
+            buffer.flush()
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -51,7 +53,7 @@ async def predict(
     # 3. Execute Deep Learning model prediction
     try:
         predictor = get_predictor()
-        predicted_class, confidence, probabilities = predictor.predict_image(input_filepath)
+        predicted_class, confidence, probabilities = predictor.predict_image(input_filepath, file_bytes=file_bytes)
     except Exception as e:
         # Cleanup uploaded file if prediction fails
         if os.path.exists(input_filepath):
